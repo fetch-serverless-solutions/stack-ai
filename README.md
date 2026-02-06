@@ -14,7 +14,6 @@
 - **Secrets Store CSI Driver**: Secure, native secrets sync from AWS Secrets Manager.
 - **Karpenter**: Modern, flexible autoscaler for Kubernetes.
 - **ALB Ingress**: Native AWS load balancing and SSL termination.
-- **Cert-Manager**: Automated certificate management.
 - **S3**: Durable, cost-effective object storage.
 
 ## 3. Prerequisites & Setup Instructions
