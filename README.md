@@ -6,7 +6,6 @@
 - **AWS Secrets Manager**: Stores all sensitive credentials, synced to Kubernetes via the Secrets Store CSI Driver.
 - **Karpenter**: Provides dynamic node autoscaling for cost and performance efficiency.
 - **ALB Ingress Controller**: Exposes services securely via AWS Application Load Balancer.
-- **Cert-Manager**: Issues TLS certificates for Ingress endpoints.
 - **S3**: Used for storage and Postgres backups.
 
 ## 2. Technology Choices Justification
