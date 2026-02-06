@@ -1,0 +1,16 @@
+eksctl create iamserviceaccount \
+    --cluster=test-ai-cluster \
+    --namespace=kube-system \
+    --name=aws-load-balancer-controller \
+    --attach-policy-arn=arn:aws:iam::998284843362:policy/AWSLoadBalancerControllerIAMPolicy\
+    --override-existing-serviceaccounts \
+    --region us-east-1 \
+    --approve
+
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=test-ai-cluster \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --version 1.14.0

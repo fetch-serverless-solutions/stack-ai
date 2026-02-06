@@ -1,0 +1,295 @@
+kong:
+  enabled: true
+  ingress:
+    enabled: true
+    className: "alb"
+    annotations:
+      # ALB Configuration
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      
+      # ACM Certificate - HTTPS Configuration
+      alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:998284843362:certificate/d8f28203-e53a-4b9f-b05e-fbd14a3b397b
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      
+      # Health checks
+      alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+      alb.ingress.kubernetes.io/healthcheck-path: /
+      alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+      alb.ingress.kubernetes.io/success-codes: "200,301,302"
+    
+    hosts:
+      - host: supabase.zicodev.com
+        paths:
+          - path: /
+            pathType: Prefix
+# Supabase Helm Chart Values (production-ready, EKS, CSI secrets, HPA, persistence, S3 backups, ALB ingress)
+
+postgres:
+  enabled: true # Enable in-cluster Postgres
+  auth:
+    existingSecret: postgres-creds-from-aws # Kubernetes secret synced from AWS Secrets Manager
+    usernameKey: username
+    passwordKey: password
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  serviceAccount:
+    create: true
+    name: supabase-secrets-sa
+
+postgrest:
+  enabled: true
+  replicaCount: 2
+  environment:
+    KONG_ADMIN_USERNAME:
+      secretKeyRef:
+        name: supabase-dashboard-aws
+        key: username
+    KONG_ADMIN_PASSWORD:
+      secretKeyRef:
+        name: supabase-dashboard-aws
+        key: password
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  environment:
+    PGRST_JWT_SECRET:
+      secretKeyRef:
+        name: supabase-jwt-secret
+        key: JWT_SECRET
+    PGRST_DB_URI:
+      secretKeyRef:
+        name: supabase-db-secret
+        key: username
+
+realtime:
+  enabled: true
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+auth:
+  enabled: true
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  environment:
+    # Override the entire block to avoid duplicate GOTRUE_JWT_SECRET
+    DB_USER: supabase_auth_admin
+    DB_PORT: 5432
+    DB_DRIVER: postgres
+    DB_SSL: disable
+    API_EXTERNAL_URL: http://supabase.local
+    GOTRUE_API_HOST: "0.0.0.0"
+    GOTRUE_API_PORT: "9999"
+    GOTRUE_SITE_URL: http://supabase.local
+    GOTRUE_URI_ALLOW_LIST: "*"
+    GOTRUE_DISABLE_SIGNUP: "false"
+    GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+    GOTRUE_JWT_ADMIN_ROLES: service_role
+    GOTRUE_JWT_AUD: authenticated
+    GOTRUE_JWT_EXP: "3600"
+    GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+    GOTRUE_MAILER_AUTOCONFIRM: "true"
+    GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+    GOTRUE_SMTP_ADMIN_EMAIL: "SMTP_ADMIN_MAIL"
+    GOTRUE_SMTP_HOST: "SMTP_HOST"
+    GOTRUE_SMTP_PORT: "123"
+    GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+    GOTRUE_SMS_AUTOCONFIRM: "false"
+    GOTRUE_SMTP_SENDER_NAME: "SMTP_SENDER_NAME"
+    GOTRUE_MAILER_URLPATHS_INVITE: "/auth/v1/verify"
+    GOTRUE_MAILER_URLPATHS_CONFIRMATION: "/auth/v1/verify"
+    GOTRUE_MAILER_URLPATHS_RECOVERY: "/auth/v1/verify"
+    GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: "/auth/v1/verify"
+
+rest:
+  enabled: true
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+storage:
+  enabled: true
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 75
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  s3:
+    enabled: true
+    bucket: "stack-ai-supabase-storage"
+    region: "us-east-1"
+
+studio:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  serviceAccount:
+    create: true
+    name: supabase-studio-sa
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::998284843362:role/dev-supabase-csi-role
+  
+  # Mount CSI volume to trigger secret sync
+  extraVolumes:
+    - name: secrets-store
+      csi:
+        driver: secrets-store.csi.k8s.io
+        readOnly: true
+        volumeAttributes:
+          secretProviderClass: "supabase-secrets-dashboard"
+  
+  extraVolumeMounts:
+    - name: secrets-store
+      mountPath: "/mnt/secrets-store"
+      readOnly: true
+  
+  # Environment variables
+#  environment:
+    # Dashboard credentials from AWS Secrets Manager
+#    SUPABASE_DASHBOARD_USERNAME:
+#      secretKeyRef:
+#        name: supabase-dashboard-aws
+#        key: username
+#    SUPABASE_DASHBOARD_PASSWORD:
+#      secretKeyRef:
+#        name: supabase-dashboard-aws
+#        key: password
+  env:
+    - name: SUPABASE_DASHBOARD_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: supabase-dashboard-aws
+          key: username
+    
+    - name: SUPABASE_DASHBOARD_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: supabase-dashboard-aws
+          key: password
+    
+    - name: SUPABASE_SERVICE_ROLE_KEY
+      valueFrom:
+        secretKeyRef:
+          name: supabase-api-secret
+          key: service-role-key
+    
+    - name: SUPABASE_ADMIN_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: supabase-api-secret
+          key: admin-api-key
+
+
+    # OpenAI API Key (if needed)
+#    OPENAI_API_KEY:
+#      secretKeyRef:
+#        name: supabase-dashboard-aws
+#        key: openAiApiKey
+    
+    # API keys (keep existing references)
+
+ 
+service:
+  type: LoadBalancer
+  port: 443
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: "supabase.zicodev.com"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: supabase-tls
+      hosts:
+        - supabase.zicodev.com
+
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              namespace: supabase
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    interval: 30s
+  logging:
+    enabled: true
+    level: info

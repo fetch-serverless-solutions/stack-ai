@@ -1,0 +1,258 @@
+---
+# StorageClass for PostgreSQL (using AWS EBS gp3)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
+reclaimPolicy: Retain  # Important: retain data even if PVC is deleted
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# PersistentVolumeClaim for PostgreSQL
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: supabase-postgres-pvc
+  namespace: supabase
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# CronJob for PostgreSQL backups to S3
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: supabase-postgres-backup
+  namespace: supabase
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: supabase-backup-sa
+          containers:
+          - name: postgres-backup
+            image: postgres:14-alpine
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-db-secret
+                  key: host
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-db-secret
+                  key: port
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-db-secret
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-db-secret
+                  key: password
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: supabase-db-secret
+                  key: database
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: BACKUP_BUCKET
+              value: "stack-ai-supabase-backups"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BACKUP_NAME="supabase-backup-$(date +%Y%m%d-%H%M%S).sql.gz"
+              echo "Starting backup: $BACKUP_NAME"
+              pg_dump -v --format=custom | gzip > /tmp/$BACKUP_NAME
+              
+              # Upload to S3 using AWS CLI
+              apt-get update && apt-get install -y awscli
+              aws s3 cp /tmp/$BACKUP_NAME s3://$BACKUP_BUCKET/backups/$BACKUP_NAME --region $AWS_REGION
+              echo "Backup completed and uploaded to s3://$BACKUP_BUCKET/backups/$BACKUP_NAME"
+              
+              # Clean up local backup
+              rm /tmp/$BACKUP_NAME
+            resources:
+              requests:
+                cpu: 250m
+                memory: 512Mi
+              limits:
+                cpu: 1000m
+                memory: 2Gi
+          restartPolicy: OnFailure
+
+---
+# ServiceAccount for backup CronJob
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: supabase-backup-sa
+  namespace: supabase
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::998284843362:role/supabase-backup-role
+
+---
+# ConfigMap for backup retention policy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-retention-policy
+  namespace: supabase
+data:
+  retention_days: "30"
+  retention_count: "100"
+  full_backup_schedule: "0 0 * * 0"  # Weekly full backups
+  incremental_backup_schedule: "0 * * * *"  # Hourly incremental
+
+---
+# CronJob for backup cleanup (older than 30 days)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: supabase-backup-cleanup
+  namespace: supabase
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM UTC (after backup completes)
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: supabase-backup-sa
+          containers:
+          - name: backup-cleanup
+            image: amazon/aws-cli:latest
+            env:
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: BACKUP_BUCKET
+              value: "stack-ai-supabase-backups"
+            - name: RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: backup-retention-policy
+                  key: retention_days
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Cleaning up backups older than $RETENTION_DAYS days"
+              aws s3 ls s3://$BACKUP_BUCKET/backups/ --recursive | while read -r date time size file; do
+                createDate=$(date -d "$date" +%s)
+                olderThanDate=$(date --date "$RETENTION_DAYS days ago" +%s)
+                if [[ $createDate -lt $olderThanDate ]]; then
+                  echo "Deleting s3://$BACKUP_BUCKET/$file"
+                  aws s3 rm s3://$BACKUP_BUCKET/$file --region $AWS_REGION
+                fi
+              done
+              echo "Cleanup completed"
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+          restartPolicy: OnFailure
+
+---
+# StatefulSet for PostgreSQL with persistence (optional - if not using external RDS)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: supabase-postgres
+  namespace: supabase
+spec:
+  serviceName: supabase-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: supabase-postgres
+  template:
+    metadata:
+      labels:
+        app: supabase-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: supabase-db-secret
+              key: database
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: supabase-db-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: supabase-db-secret
+              key: password
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+          subPath: postgres
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER
+          initialDelaySeconds: 5
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: gp3
+      resources:
+        requests:
+          storage: 50Gi

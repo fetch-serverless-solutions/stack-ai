@@ -1,0 +1,19 @@
+eksctl create iamserviceaccount \
+  --cluster=test-ai-cluster \
+  --namespace=karpenter \
+  --name=karpenter \
+  --attach-policy-arn=arn:aws:iam::998284843362:policy/karpenter-autoscaler \
+  --approve \
+  --region us-east-1
+
+
+helm install karpenter oci://public.ecr.aws/karpenter/karpenter \
+  --version 1.0.6 \
+  --namespace karpenter \
+  --set serviceAccount.create=false \
+  --set settings.clusterName=test-ai-cluster \
+  --set settings.clusterEndpoint=https://795571A07C928358C6CA0CEFE0987042.gr7.us-east-1.eks.amazonaws.com \
+  --set controller.resources.requests.cpu=500m \
+  --set controller.resources.requests.memory=512Mi \
+  --set controller.resources.limits.cpu=1000m \
+  --set controller.resources.limits.memory=1Gi 

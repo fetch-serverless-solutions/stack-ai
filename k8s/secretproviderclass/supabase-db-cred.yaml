@@ -1,0 +1,20 @@
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: supabase-db-secret
+  namespace: supabase
+spec:
+  provider: aws
+  parameters:
+    region: us-east-1
+    objects: |
+      - objectName: "my-supabase-db-secret"
+        objectType: "secretsmanager"
+  secretObjects:
+    - secretName: postgres-creds-from-aws
+      type: Opaque
+      data:
+        - objectName: "my-supabase-db-secret"
+          key: password
+        - objectName: "my-supabase-db-secret"
+          key: database
