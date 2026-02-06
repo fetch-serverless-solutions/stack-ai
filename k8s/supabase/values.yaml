@@ -204,7 +204,7 @@ studio:
     - name: secrets-store
       mountPath: "/mnt/secrets-store"
       readOnly: true
-  
+#  
   # Environment variables
 #  environment:
     # Dashboard credentials from AWS Secrets Manager
