@@ -26,36 +26,29 @@
 ## 4. Deployment Instructions
 1. **Install CSI Driver & AWS Provider**
     - See `k8s/secretproviderclass/` for manifests and Helm commands.
-2. **Install cert-manager**
-    ```sh
-    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.crds.yaml
-    helm repo add jetstack https://charts.jetstack.io
-    helm repo update
-    kubectl create namespace cert-manager
-    helm install cert-manager jetstack/cert-manager --namespace cert-manager --version v1.14.4
-    ```
-3. **Install ALB Ingress Controller**
+
+2. **Install ALB Ingress Controller**
     - See `k8s/aws-ingress/notes.txt` for commands.
-4. **Create ACM Certificate for Ingress**
+3. **Create ACM Certificate for Ingress**
     - In AWS ACM, request a public certificate for `supabase.zicodev.com` (or your domain).
     - Validate the certificate via DNS or email as prompted by AWS.
     - Note the ACM certificate ARN (e.g., `arn:aws:acm:us-east-1:...`).
     - In your Kong Ingress and/or other Ingress manifests, set the annotation:
       `alb.ingress.kubernetes.io/certificate-arn: <your-acm-certificate-arn>`
     - This enables HTTPS for your Ingress using the ACM certificate.
-5. **Configure DNS (A Record) for Domain**
+4. **Configure DNS (A Record) for Domain**
     - In your DNS provider (e.g., Route53, GoDaddy), create an A record for `supabase.zicodev.com`.
     - Point this A record to the ALB DNS name provisioned by the Ingress (find with `kubectl get ingress -n supabase`).
     - This will route traffic from your custom domain to the Supabase dashboard securely.
-4. **Install Karpenter**
+5. **Install Karpenter**
     - See `k8s/autoscale/` for Helm and IRSA setup.
-5. **Deploy Supabase**
+6. **Deploy Supabase**
     ```sh
     helm repo add supabase https://supabase-community.github.io/supabase-kubernetes
     helm repo update
     helm upgrade --install supabase supabase/supabase -n supabase -f k8s/supabase/values.yaml
     ```
-6. **Apply HPAs**
+7. **Apply HPAs**
     ```sh
     kubectl apply -f k8s/autoscale/
     ```
